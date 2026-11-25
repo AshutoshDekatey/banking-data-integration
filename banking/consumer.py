@@ -62,6 +62,8 @@ def run() -> None:
         "group.id": os.environ.get("CDC_GROUP", "banking-sink-v1"),
         "enable.auto.commit": False,
         "enable.auto.offset.store": False,
+        "session.timeout.ms": 15000,
+        "heartbeat.interval.ms": 3000,
         "auto.offset.reset": "error",
     })
     consumer.subscribe([topic], on_assign=assign)
