@@ -1,0 +1,155 @@
+name: banking-streaming
+
+x-app: &app
+  build: .
+  environment: &app-env
+    SOURCE_PASSWORD: ${SOURCE_PASSWORD:?Copy .env.example to .env}
+    TARGET_PASSWORD: ${TARGET_PASSWORD:?Copy .env.example to .env}
+
+services:
+  source:
+    image: postgres:16.9
+    command: ["postgres", "-c", "wal_level=logical"]
+    environment:
+      POSTGRES_DB: source
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${SOURCE_PASSWORD}
+    volumes:
+      - source-data:/var/lib/postgresql/data
+      - ./sql/001_source.sql:/docker-entrypoint-initdb.d/001_source.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U bank -d source"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  target:
+    image: postgres:16.9
+    environment:
+      POSTGRES_DB: target
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: ${TARGET_PASSWORD}
+    volumes:
+      - target-data:/var/lib/postgresql/data
+      - ./sql/001_target.sql:/docker-entrypoint-initdb.d/001_target.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U bank -d target"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  broker:
+    image: redpandadata/redpanda:v24.3.18
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=768M
+      - --kafka-addr=0.0.0.0:29092
+      - --advertise-kafka-addr=broker:29092
+    volumes:
+      - broker-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "-X", "brokers=localhost:29092"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  connect:
+    image: quay.io/debezium/connect:3.1.2.Final
+    environment:
+      BOOTSTRAP_SERVERS: broker:29092
+      GROUP_ID: banking-connect
+      CONFIG_STORAGE_TOPIC: banking-connect-config
+      OFFSET_STORAGE_TOPIC: banking-connect-offsets
+      STATUS_STORAGE_TOPIC: banking-connect-status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx768m"
+    ports: ["127.0.0.1:8083:8083"]
+    depends_on:
+      broker: {condition: service_healthy}
+      source: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8083/connectors"]
+      interval: 5s
+      timeout: 5s
+      retries: 35
+  bootstrap:
+    <<: *app
+    command: ["python", "-m", "banking.bootstrap"]
+    depends_on:
+      connect: {condition: service_healthy}
+  api:
+    <<: *app
+    command: ["uvicorn", "banking.api:app", "--host", "0.0.0.0", "--no-access-log"]
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      source: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  consumer:
+    <<: *app
+    command: ["python", "-m", "banking.consumer"]
+    restart: on-failure
+    ports: ["127.0.0.1:9100:9100"]
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+      target: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; assert b'banking_cdc_ready 1.0' in urlopen('http://localhost:9100/metrics', timeout=3).read()"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  tools:
+    <<: *app
+    profiles: [tools]
+    command: ["python", "-m", "banking.generate"]
+  dbt:
+    profiles: [analytics]
+    build:
+      context: .
+      dockerfile: analytics/Dockerfile
+    environment:
+      TARGET_PASSWORD: ${TARGET_PASSWORD}
+  airflow-db:
+    profiles: [orchestration]
+    image: postgres:16.9
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_PASSWORD:-local_airflow_only}
+    volumes:
+      - airflow-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 25
+  airflow:
+    profiles: [orchestration]
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    command: standalone
+    environment:
+      <<: *app-env
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_PASSWORD:-local_airflow_only}@airflow-db/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      airflow-db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  source-data:
+  target-data:
+  broker-data:
+  airflow-data:
