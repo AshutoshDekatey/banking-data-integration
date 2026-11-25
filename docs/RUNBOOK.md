@@ -151,7 +151,7 @@ Expect the run to move from queued to running to success on a drained pipeline. 
 docker compose kill -s SIGKILL consumer
 docker compose stop target
 docker compose run --rm tools python -m banking.generate create --count 20 --seed 43
-docker compose start consumer
+docker compose up -d --no-deps consumer
 docker compose logs --tail=25 consumer
 docker compose up -d --wait target
 docker compose run --rm tools python -m banking.verify state
@@ -162,7 +162,7 @@ docker compose run --rm bootstrap
 docker compose run --rm tools python -m banking.verify state
 ```
 
-To see `write_retry`, allow time for the consumer to reach the queued records before bringing target back. Retained PostgreSQL and broker data allow the workers to recover. If Connect reports a failed task after a broker outage, inspect and restart it after confirming the cause.
+`--no-deps` keeps target PostgreSQL stopped during the drill. To see `write_retry`, allow time for the consumer to reach the queued records before bringing target back. Retained PostgreSQL and broker data allow the workers to recover. If Connect reports a failed task after a broker outage, inspect and restart it after confirming the cause.
 
 ## 15. Verify replay and idempotency
 

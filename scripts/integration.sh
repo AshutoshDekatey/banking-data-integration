@@ -29,9 +29,10 @@ dc run --rm tools python -m banking.verify state
 dc kill -s SIGKILL consumer
 dc stop target
 dc run --rm tools python -m banking.generate mutate --count 120
-dc start consumer
+# Bypass the startup dependency so Compose leaves target offline.
+dc up -d --no-deps consumer
 for attempt in {1..30}; do
-    if dc logs consumer | grep 'write_retry' >/dev/null; then
+    if dc logs consumer 2>&1 | grep 'write_retry' >/dev/null; then
         break
     fi
     if [[ "$attempt" == 30 ]]; then
