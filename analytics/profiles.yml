@@ -1,0 +1,12 @@
+banking:
+  target: local
+  outputs:
+    local:
+      type: postgres
+      host: "{{ env_var('TARGET_HOST', 'target') }}"
+      port: "{{ env_var('TARGET_PORT', '5432') | int }}"
+      dbname: target
+      user: bank
+      password: "{{ env_var('TARGET_PASSWORD') }}"
+      schema: analytics
+      threads: 2

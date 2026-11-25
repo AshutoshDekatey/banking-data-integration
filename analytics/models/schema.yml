@@ -1,0 +1,29 @@
+version: 2
+sources:
+  - name: ingest
+    tables:
+      - name: transaction_state
+      - name: reconciliation_exceptions
+models:
+  - name: transactions
+    columns:
+      - name: transaction_id
+        data_tests: [unique, not_null]
+      - name: account_id
+        data_tests: [not_null]
+      - name: amount_minor
+        data_tests: [not_null]
+      - name: status
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['pending', 'settled', 'failed', 'reversed', 'cancelled']
+      - name: currency
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['USD', 'INR', 'EUR']
+  - name: reconciliation_exceptions
+    columns:
+      - name: transaction_id
+        data_tests: [unique, not_null]
