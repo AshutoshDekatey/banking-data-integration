@@ -23,7 +23,7 @@ def request(url: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
 
 def main() -> None:
     admin = AdminClient({"bootstrap.servers": os.environ.get("KAFKA_BOOTSTRAP", "broker:29092")})
-    result = admin.create_topics([NewTopic(TOPIC, 3, 1, {
+    result = admin.create_topics([NewTopic(TOPIC, num_partitions=3, replication_factor=1, config={
         "cleanup.policy": "delete",
         "retention.ms": "604800000",
     })], request_timeout=15)[TOPIC]
@@ -51,7 +51,10 @@ def main() -> None:
             "table.include.list": r"bank\.transactions",
             "snapshot.mode": "initial",
             "tombstones.on.delete": "true",
-            "topic.creation.enable": "false",
+            "topic.creation.default.replication.factor": "1",
+            "topic.creation.default.partitions": "3",
+            "topic.creation.default.cleanup.policy": "delete",
+            "topic.creation.default.retention.ms": "604800000",
             "key.converter": "org.apache.kafka.connect.json.JsonConverter",
             "key.converter.schemas.enable": "false",
             "value.converter": "org.apache.kafka.connect.json.JsonConverter",
@@ -73,8 +76,10 @@ def main() -> None:
                 ):
                     print("banking-source connector and task RUNNING")
                     return
-                if any(task["state"] == "FAILED" for task in tasks):
-                    raise RuntimeError("CDC task failed. Inspect Connect task status.")
+                if status["connector"]["state"] == "FAILED" or any(
+                    task["state"] == "FAILED" for task in tasks
+                ):
+                    raise RuntimeError("CDC connector or task failed. Inspect Connect status.")
         except HTTPError as error:
             if error.code not in (409, 502, 503, 504):
                 raise
